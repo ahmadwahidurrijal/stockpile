@@ -1,0 +1,6 @@
+streamlit
+streamlit-gsheets
+plotly
+pandas
+numpy
+shapely
