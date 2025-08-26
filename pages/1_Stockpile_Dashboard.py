@@ -76,5 +76,17 @@ fig.update_layout(
     height=500,
     margin=dict(l=10, r=10, t=40, b=10),
     title="Rentang Tiang per Pile (tipe jenis coal per warna)",
+    dragmode=False    # nonaktifkan drag default (zoom/pan/select)
+    
 )
-st.plotly_chart(fig, use_container_width=True)
+st.plotly_chart(
+    fig,
+    use_container_width=True,
+    config={
+        "displaylogo": False,  # hilangkan logo Plotly
+        "modeBarButtonsToRemove": [
+            "zoom", "select", "lasso2d"
+        ]
+    }
+)
+
