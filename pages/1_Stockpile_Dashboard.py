@@ -33,7 +33,7 @@ subset = df[["name", "lebar(tiang)"]].copy()
 st.dataframe(subset, use_container_width=True)
 
 # --- Plot rectangles ---
-st.subheader("Figur Rectangle")
+st.subheader("Mapping Coal Berdasarkan tiang dan tipe coal")
 fig = go.Figure()
 
 x_min = int(df["tiang_start"].min()) if df["tiang_start"].notna().any() else 0
@@ -43,7 +43,7 @@ x_max = int(df["tiang_end"].max()) if df["tiang_end"].notna().any() else 10
 palette = pc.qualitative.Set3 + pc.qualitative.Pastel1
 n_colors = len(palette)
 
-y_gap = 1
+y_gap = 0
 for i, r in df.dropna(subset=["tiang_start", "tiang_end"]).reset_index(drop=True).iterrows():
     y0, y1 = i * y_gap + 0.2, i * y_gap + 0.8
     x0, x1 = float(r["tiang_start"]), float(r["tiang_end"])
@@ -52,7 +52,7 @@ for i, r in df.dropna(subset=["tiang_start", "tiang_end"]).reset_index(drop=True
     fig.add_shape(
         type="rect",
         x0=x0, y0=y0, x1=x1, y1=y1,
-        line=dict(color=color, width=2),
+        line=dict(color=color, width=4),
         fillcolor=color,
         opacity=0.4,
     )
@@ -61,14 +61,20 @@ for i, r in df.dropna(subset=["tiang_start", "tiang_end"]).reset_index(drop=True
         y=(y0 + y1) / 2,
         text=str(r["name"]),
         showarrow=False,
-        font=dict(size=12),
+        font=dict(size=11),
     )
 
 fig.update_xaxes(title="Tiang", range=[x_min - 1, x_max + 1], dtick=1)
-fig.update_yaxes(title=" ", showticklabels=False)
+fig.update_yaxes(
+    range=[0.25,0.95],       # hanya tampil dari 0 s.d. 1
+    showticklabels=False,
+    showline=True,
+    linecolor="grey"
+)
+
 fig.update_layout(
-    height=600,
-    margin=dict(l=20, r=20, t=40, b=20),
-    title="Rentang Tiang per Pile (warna unik tiap kotak)",
+    height=500,
+    margin=dict(l=10, r=10, t=40, b=10),
+    title="Rentang Tiang per Pile (tipe jenis coal per warna)",
 )
 st.plotly_chart(fig, use_container_width=True)
