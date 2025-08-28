@@ -1,4 +1,3 @@
-# example/st_app.py
 import streamlit as st
 from streamlit_gsheets import GSheetsConnection
 import plotly.graph_objects as go
@@ -7,86 +6,126 @@ import pandas as pd
 
 st.set_page_config(page_title="Rectangles from Google Sheet", layout="wide")
 
-SPREADSHEET_URL = "https://docs.google.com/spreadsheets/d/1RNOBQG4m-zpdA2qAf1E1nUAI9QKJMUYGUYwUgIA-jrM/edit?gid=328753631#gid=328753631"
+# PASTIKAN URL SHEET ANDA BENAR
+SPREADSHEET_URL = "https://docs.google.com/sheets/d/1RNOBQG4m-zpdA2qAf1E1nUAI9QKJMUYGUYwUgIA-jrM/edit?gid=328753631#gid=328753631"
 
 # --- Koneksi ---
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 # --- Baca data ---
-df = conn.read(spreadsheet=SPREADSHEET_URL, ttl=0)
+try:
+    df = conn.read(spreadsheet=SPREADSHEET_URL, ttl=5) # Menggunakan TTL rendah untuk refresh data
+except Exception as e:
+    st.error(f"Gagal membaca Google Sheet. Pastikan URL sudah benar dan sheet telah di-share. Error: {e}")
+    st.stop()
+    
 st.subheader("Raw data dari Google Sheets")
 st.dataframe(df, use_container_width=True)
 
 # --- Bersihkan tipe data utama ---
-for col in ["tiang_start", "tiang_end", "lebar(tiang)"]:
+for col in ["tiang_start", "tiang_end", "lebar(tiang)", "sudut_start", "sudut_end", "Ash_%", "Sulfur_%"]:
     if col in df.columns:
         df[col] = pd.to_numeric(df[col], errors="coerce")
 
-need_cols = ["name", "tiang_start", "tiang_end", "lebar(tiang)"]
+# Mengubah kolom yang wajib ada untuk plotting dan hover
+need_cols = ["name", "tiang_start", "tiang_end", "sudut_start", "sudut_end", "stockpile_id", "Ash_%", "Sulfur_%"]
 missing = [c for c in need_cols if c not in df.columns]
 if missing:
     st.error(f"Kolom wajib belum lengkap di sheet: {', '.join(missing)}")
     st.stop()
 
-st.subheader("Subset kolom (name & lebar)")
-subset = df[["name", "lebar(tiang)"]].copy()
-st.dataframe(subset, use_container_width=True)
+df_plot = df.dropna(subset=need_cols).copy()
+
+if df_plot.empty:
+    st.warning("Tidak ada data valid yang bisa di-plot setelah membuang baris kosong. Periksa kembali isi Google Sheet Anda.")
+    st.stop()
 
 # --- Plot rectangles ---
-st.subheader("Mapping Coal Berdasarkan tiang dan tipe coal")
+st.subheader("Mapping Coal Berdasarkan Tiang dan Sudut Stacking")
 fig = go.Figure()
 
-x_min = int(df["tiang_start"].min()) if df["tiang_start"].notna().any() else 0
-x_max = int(df["tiang_end"].max()) if df["tiang_end"].notna().any() else 10
+# Menentukan batas sumbu x dan y secara dinamis
+x_min = int(df_plot["tiang_start"].min())
+x_max = int(df_plot["tiang_end"].max())
+y_min = int(df_plot["sudut_start"].min())
+y_max = int(df_plot["sudut_end"].max())
 
 # palet warna
-palette = pc.qualitative.Set3 + pc.qualitative.Pastel1
+palette = pc.qualitative.Plotly
 n_colors = len(palette)
 
-y_gap = 0
-for i, r in df.dropna(subset=["tiang_start", "tiang_end"]).reset_index(drop=True).iterrows():
-    y0, y1 = i * y_gap + 0.2, i * y_gap + 0.8
+for i, r in df_plot.reset_index(drop=True).iterrows():
+    y0 = float(r["sudut_start"])
+    y1 = float(r["sudut_end"])
+    
     x0, x1 = float(r["tiang_start"]), float(r["tiang_end"])
     color = palette[i % n_colors]
 
     fig.add_shape(
         type="rect",
         x0=x0, y0=y0, x1=x1, y1=y1,
-        line=dict(color=color, width=4),
+        line=dict(color=color, width=3),
         fillcolor=color,
-        opacity=0.4,
+        opacity=0.5,
     )
+    
     fig.add_annotation(
         x=(x0 + x1) / 2,
         y=(y0 + y1) / 2,
         text=str(r["name"]),
         showarrow=False,
-        font=dict(size=11),
+        font=dict(size=15, color="black"),
     )
 
-fig.update_xaxes(title="Tiang", range=[x_min - 1, x_max + 1], dtick=1)
+# Menambahkan scatter plot transparan untuk fungsi hover
+# Setiap titik berada di tengah-tengah rectangle
+fig.add_trace(
+    go.Scatter(
+        x=(df_plot["tiang_start"] + df_plot["tiang_end"]) / 2,
+        y=(df_plot["sudut_start"] + df_plot["sudut_end"]) / 2,
+        mode="markers",
+        marker=dict(size=0.1, opacity=0), # Membuat marker tidak terlihat
+        hoverinfo="text",
+        hovertext=df_plot.apply(
+            lambda row: f"<b>Stockpile ID:</b> {row['stockpile_id']}<br><b>Ash:</b> {row['Ash_%']:.2f}%<br><b>Sulfur:</b> {row['Sulfur_%']:.2f}%",
+            axis=1
+        ),
+        showlegend=False
+    )
+)
+
+# Konfigurasi Sumbu X
+fig.update_xaxes(
+    title="Nomor Tiang", 
+    range=[x_min - 1, x_max + 1], 
+    dtick=1
+)
+
+# Konfigurasi Sumbu Y
 fig.update_yaxes(
-    range=[0.25,0.95],       # hanya tampil dari 0 s.d. 1
-    showticklabels=False,
+    title="Sudut Stacking (derajat)",
+    range=[y_min, y_max],
+    dtick=10,
+    showticklabels=True,
     showline=True,
     linecolor="grey"
 )
 
 fig.update_layout(
-    height=500,
-    margin=dict(l=10, r=10, t=40, b=10),
-    title="Rentang Tiang per Pile (tipe jenis coal per warna)",
-    dragmode=False    # nonaktifkan drag default (zoom/pan/select)
-    
+    height=600,
+    margin=dict(l=10, r=10, t=50, b=10),
+    title="Visualisasi Posisi Coal Pile",
+    hovermode="closest", # Mengaktifkan hover pada titik terdekat
+    dragmode=False
 )
+
 st.plotly_chart(
     fig,
     use_container_width=True,
     config={
-        "displaylogo": False,  # hilangkan logo Plotly
+        "displaylogo": False,
         "modeBarButtonsToRemove": [
-            "zoom", "select", "lasso2d"
+            "zoom", "select", "lasso2d", "pan"
         ]
     }
 )
-
