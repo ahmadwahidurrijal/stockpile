@@ -23,12 +23,15 @@ st.subheader("Raw data dari Google Sheets")
 st.dataframe(df, use_container_width=True)
 
 # --- Bersihkan tipe data utama ---
+# Pastikan kolom 'tanggal' ada dan dikonversi dengan benar
+if "tanggal" in df.columns:
+    df['tanggal'] = pd.to_datetime(df['tanggal'], errors='coerce', dayfirst=True) # dayfirst=True digunakan untuk format DD-MM-YYYY
 for col in ["tiang_start", "tiang_end", "lebar(tiang)", "sudut_start", "sudut_end", "Ash_%", "Sulfur_%"]:
     if col in df.columns:
         df[col] = pd.to_numeric(df[col], errors="coerce")
 
 # Mengubah kolom yang wajib ada untuk plotting dan hover
-need_cols = ["name", "tiang_start", "tiang_end", "sudut_start", "sudut_end", "stockpile_id", "Ash_%", "Sulfur_%"]
+need_cols = ["name", "tiang_start", "tiang_end", "sudut_start", "sudut_end", "stockpile_id", "Ash_%", "Sulfur_%", "tanggal"]
 missing = [c for c in need_cols if c not in df.columns]
 if missing:
     st.error(f"Kolom wajib belum lengkap di sheet: {', '.join(missing)}")
@@ -39,6 +42,11 @@ df_plot = df.dropna(subset=need_cols).copy()
 if df_plot.empty:
     st.warning("Tidak ada data valid yang bisa di-plot setelah membuang baris kosong. Periksa kembali isi Google Sheet Anda.")
     st.stop()
+
+# --- FILTER DATA UNTUK MENGHILANGKAN OVERLAPPING TIANG ---
+# Mengelompokkan data berdasarkan rentang tiang (tiang_start dan tiang_end)
+# dan hanya mengambil baris dengan tanggal terbaru dalam setiap kelompok
+df_plot = df_plot.loc[df_plot.groupby(["tiang_start", "tiang_end"])["tanggal"].idxmax()]
 
 # --- Plot rectangles ---
 st.subheader("Mapping Coal Berdasarkan Tiang dan Sudut Stacking")
@@ -87,7 +95,7 @@ fig.add_trace(
         marker=dict(size=0.1, opacity=0), # Membuat marker tidak terlihat
         hoverinfo="text",
         hovertext=df_plot.apply(
-            lambda row: f"<b>Stockpile ID:</b> {row['stockpile_id']}<br><b>Ash:</b> {row['Ash_%']:.2f}%<br><b>Sulfur:</b> {row['Sulfur_%']:.2f}%",
+            lambda row: f"<b>Stockpile ID:</b> {row['stockpile_id']}<br><b>Ash:</b> {row['Ash_%']:.2f}%<br><b>Sulfur:</b> {row['Sulfur_%']:.2f}%<br><b>Tanggal:</b> {row['tanggal'].strftime('%Y-%m-%d')}",
             axis=1
         ),
         showlegend=False
@@ -106,7 +114,7 @@ fig.update_yaxes(
     title="Sudut Stacking (derajat)",
     range=[y_min, y_max],
     dtick=10,
-    showticklabels=True,
+    showticklabels=False,
     showline=True,
     linecolor="grey"
 )
