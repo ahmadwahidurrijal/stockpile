@@ -35,8 +35,13 @@ def read_sheet(url: str, worksheet: str | None = None) -> pd.DataFrame:
 
 # ===================== B A C A   D A T A   U T A M A =====================
 df = read_sheet(SPREADSHEET_URL)
+# pastikan tanggal jadi datetime
+df["tanggal"] = pd.to_datetime(df["tanggal"], errors="coerce")
 
-st.subheader("Raw data dari Google Sheets (Mapping)")
+# sort tanggal terbaru dulu
+df = df.sort_values("tanggal", ascending=False)
+
+st.subheader("History Data dari Google Sheets (Mapping)")
 kolom_tampil = ["tipe", "tongkang", "Ash_%", "Sulfur_%", "tanggal","tiang_start","tiang_end","Sudut Stacking"]
 st.dataframe(
     df[[c for c in kolom_tampil if c in df.columns]],
@@ -92,7 +97,7 @@ y_min_custom, y_max_custom = st.sidebar.slider(
 
 
 # ===================== R E C L A I M E R   ( T A B E L   B A R U ) =====================
-st.subheader("Tabel Reclaimer (URL kedua)")
+st.subheader("History Data Posisi Reclaimer")
 df_reclaimer = read_sheet(RECLAIMER_URL, RECLAIMER_SHEET)
 
 # Normalisasi nama kolom agar aman (mis. ada spasi/kapital)
@@ -125,7 +130,7 @@ st.caption("Sumber: URL reclaimer (gid=1231789348)")
 
 
 # --- Plotting dengan Plotly ---
-st.subheader("Mapping Coal Berdasarkan Tiang dan Sudut Stacking")
+st.subheader("Mapping Coal Terbaru")
 
 # reset figure agar data lama tidak tersisa
 fig = go.Figure()
@@ -138,14 +143,16 @@ fig.layout.annotations = []  # hapus semua annotation lama
 color_map = {
     "Coal Normal": "green",
     "Coal Mix 2:1": "yellow",
-    "Coal HS": "red"
+    "Coal HS": "red",
+    "Coal NS" : "green",
+    
 }
 
 # ===================== FILTER DATA TERBARU PER OVERLAP =====================
 
 def is_overlap(r1, r2, debug=False):
     """True kalau dua area tiang & sudut saling tumpang tindih atau salah satunya di dalam yang lain."""
-    overlap_x = not (r1["tiang_end"] <= r2["tiang_start"] or r1["tiang_start"] >= r2["tiang_end"])
+    overlap_x = (r1["tiang_start"] < r2["tiang_end"]) and (r2["tiang_start"] < r1["tiang_end"])
     overlap_y = not (r1["sudut_end"] <= r2["sudut_start"] or r1["sudut_start"] >= r2["sudut_end"])
     result = overlap_x and overlap_y
 
@@ -158,26 +165,21 @@ def is_overlap(r1, r2, debug=False):
     return result
 
 
-
 # urutkan berdasarkan tanggal (lama -> baru, jadi yang baru terakhir)
-df_sorted = df.sort_values("tanggal")
+df_sorted = df.sort_values("tanggal",ascending=False)
 
 selected_rows = []
 for _, row in df_sorted.iterrows():
-    replace_index = None
-    for i, sel in enumerate(selected_rows):
-        if is_overlap(row, sel, debug=False):
-            # kalau overlap, hanya simpan yang terbaru
-            if row["tanggal"] > sel["tanggal"]:
-                replace_index = i
-            break
-    if replace_index is not None:
-        selected_rows[replace_index] = row  # ganti data lama dengan baru
-    else:
-        selected_rows.append(row)
+    if any(is_overlap(row, sel) for sel in selected_rows):
+        continue
+    selected_rows.append(row)
+
 
 # hasil final untuk plotting
 df_plot = pd.DataFrame(selected_rows)
+df_plot = df_plot.sort_values("tiang_start", ascending=True)
+#printkan hasil df_plot
+st.write(df_plot)
 
 # Reset figure
 fig = go.Figure()
@@ -211,51 +213,24 @@ for i, r in df_plot.reset_index(drop=True).iterrows():
         bgcolor="white",
         opacity=0.7
     )
-
-# hover transparan
-fig.add_trace(
-    go.Scatter(
-        x=(df_plot["tiang_start"] + df_plot["tiang_end"]) / 2,
-        y=(df_plot["sudut_start"] + df_plot["sudut_end"]) / 2,
-        mode="markers",
-        marker=dict(size=0.1, opacity=0),
-        hoverinfo="text",
-        hovertext=df_plot.apply(
-            lambda row: (
-                f"<b>Tipe:</b> {row['tipe']}<br>"
-                f"<b>Tongkang:</b> {row['tongkang']}<br>"
-                f"<b>Ash:</b> {row['Ash_%'] if pd.notna(row['Ash_%']) else '-'}<br>"
-                f"<b>Sulfur:</b> {row['Sulfur_%'] if pd.notna(row['Sulfur_%']) else '-'}<br>"
-                f"<b>Tanggal:</b> {row['tanggal'].strftime('%Y-%m-%d') if pd.notna(row['tanggal']) else '-'}"
+    fig.add_trace(
+        go.Scatter(
+            x=[(r["tiang_start"] + r["tiang_end"]) / 2],
+            y=[(r["sudut_start"] + r["sudut_end"]) / 2],
+            mode="markers",
+            marker=dict(size=20, opacity=0),  # lebih besar biar gampang hover
+            hoverinfo="text",
+            hovertext=(
+                f"<b>Tipe:</b> {r['tipe']}<br>"
+                f"<b>Tongkang:</b> {r['tongkang']}<br>"
+                f"<b>Ash:</b> {r['Ash_%'] if pd.notna(r['Ash_%']) else '-'}<br>"
+                f"<b>Sulfur:</b> {r['Sulfur_%'] if pd.notna(r['Sulfur_%']) else '-'}<br>"
+                f"<b>Tanggal:</b> {r['tanggal'].strftime('%Y-%m-%d') if pd.notna(r['tanggal']) else '-'}"
             ),
-            axis=1
-        ),
-        showlegend=False
+            showlegend=False
+        )
     )
-)
 
-
-# --- Hover transparan (satu titik per kotak) ---
-fig.add_trace(
-    go.Scatter(
-        x=(df_plot["tiang_start"] + df_plot["tiang_end"]) / 2,
-        y=(df_plot["sudut_start"] + df_plot["sudut_end"]) / 2,
-        mode="markers",
-        marker=dict(size=0.1, opacity=0),  # marker tak terlihat
-        hoverinfo="text",
-        hovertext=df_plot.apply(
-            lambda row: (
-                f"<b>Tipe:</b> {row['tipe']}<br>"
-                f"<b>Tongkang:</b> {row['tongkang']}<br>"
-                f"<b>Ash:</b> {row['Ash_%']:.2f}%<br>"
-                f"<b>Sulfur:</b> {row['Sulfur_%']:.2f}%<br>"
-                f"<b>Tanggal:</b> {row['tanggal'].strftime('%Y-%m-%d')}"
-            ),
-            axis=1
-        ),
-        showlegend=False
-    )
-)
 
 
 # ===================== INTEGRASI RECLAIMER =====================
