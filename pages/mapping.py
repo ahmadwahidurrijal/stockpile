@@ -179,7 +179,8 @@ for _, row in df_sorted.iterrows():
 df_plot = pd.DataFrame(selected_rows)
 df_plot = df_plot.sort_values("tiang_start", ascending=True)
 #printkan hasil df_plot
-st.write(df_plot)
+
+st.dataframe(df_plot[["tipe", "tongkang", "Ash_%", "Sulfur_%", "tanggal","tiang_start","tiang_end","Sudut Stacking"]])
 
 # Reset figure
 fig = go.Figure()
