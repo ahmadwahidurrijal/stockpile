@@ -120,6 +120,10 @@ row_height = 30
 max_height = 500
 dynamic_height = min(n_rows * row_height + 30, max_height)
 
+#urutkan tampilan reclaimer terbaru
+df_reclaimer = df_reclaimer.sort_values("tanggal", ascending=False)
+# tampilkan tabel reclaimer
+
 st.dataframe(
     df_reclaimer[cols_order] if cols_order else df_reclaimer,
     use_container_width=True,
@@ -165,14 +169,21 @@ def is_overlap(r1, r2, debug=False):
     return result
 
 
-# urutkan berdasarkan tanggal (lama -> baru, jadi yang baru terakhir)
-df_sorted = df.sort_values("tanggal",ascending=False)
+# Langkah 1: Urutkan data berdasarkan tanggal dari yang terbaru ke yang terlama.
+# Ini memastikan kita memproses data terbaru terlebih dahulu.
+df_sorted = df.sort_values("tanggal", ascending=False)
 
+# Langkah 2: Inisialisasi daftar kosong untuk menampung baris yang dipilih.
 selected_rows = []
-for _, row in df_sorted.iterrows():
-    if any(is_overlap(row, sel) for sel in selected_rows):
-        continue
-    selected_rows.append(row)
+
+# Langkah 3: Iterasi melalui setiap baris data yang sudah diurutkan.
+for _, current_row in df_sorted.iterrows():
+    # Cek apakah ada overlap dengan baris yang sudah dipilih
+    is_overlap_found = any(is_overlap(current_row, selected_row) for selected_row in selected_rows)
+    
+    # Kalau tidak ada overlap, tambahkan current_row
+    if not is_overlap_found:
+        selected_rows.append(current_row)
 
 
 # hasil final untuk plotting
