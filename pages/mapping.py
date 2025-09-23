@@ -171,7 +171,7 @@ df_plot = pd.DataFrame(selected_rows)
 if not df_plot.empty and "tiang_start" in df_plot.columns:
     df_plot = df_plot.sort_values("tiang_start", ascending=True)
 
-st.subheader("Data Tumpukan Batubara (Coal Pile) yang Ditampilkan di Plot")
+st.subheader("Data Batubara (Coal Pile) yang Ditampilkan di Plot")
 st.dataframe(df_plot, use_container_width=True)
 
 
