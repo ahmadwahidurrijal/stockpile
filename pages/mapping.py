@@ -79,7 +79,7 @@ if not available_dates:
     st.stop()
 
 selected_date = st.sidebar.selectbox(
-    "Pilih Tanggal (berdasarkan data Reclaimer)",
+    "Pilih Tanggal",
     options=available_dates,
     format_func=lambda date: pd.to_datetime(date).strftime('%d %B %Y'),
     help="Tampilkan kondisi PADA atau SEBELUM tanggal aktivitas reclaimer yang dipilih."
