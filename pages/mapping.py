@@ -72,19 +72,12 @@ for num_col in ["tiang_awal", "tiang_ahir", "ketinggian_boom"]:
 # ===================== W I D G E T   S I D E B A R =====================
 st.sidebar.subheader("Pengaturan Tampilan")
 
-# --- Widget Tanggal berdasarkan Data Reclaimer ---
-available_dates = get_available_dates(df_reclaimer_all)
-if not available_dates:
+# --- Widget Tanggal berdasarkan Data Reclaimer (Default Awal) ---
+available_dates_recl = get_available_dates(df_reclaimer_all)
+if not available_dates_recl:
     st.sidebar.error("Tidak ada data tanggal yang valid di sheet Reclaimer.")
-    st.stop()
-
-selected_date = st.sidebar.selectbox(
-    "Pilih Tanggal",
-    options=available_dates,
-    format_func=lambda date: pd.to_datetime(date).strftime('%d %B %Y'),
-    help="Tampilkan kondisi PADA atau SEBELUM tanggal aktivitas reclaimer yang dipilih."
-)
-selected_datetime = selected_date
+    # Fallback agar tidak error jika reclaimer kosong tapi mapping ada
+    available_dates_recl = [datetime.now()] 
 
 # --- Widget Skala Sumbu ---
 st.sidebar.subheader("Pengaturan Skala Sumbu")
@@ -103,23 +96,12 @@ y_min_custom, y_max_custom = st.sidebar.slider(
 
 
 # ===================== T A M P I L A N   H A L A M A N   U T A M A =====================
-# Filter berdasarkan tanggal yang dipilih untuk semua tabel dan plot
-next_day = selected_datetime + pd.Timedelta(days=1)
-
-# --- Tabel History Mapping (Filtered) ---
-st.subheader(f"History Data dari Google Sheets (Mapping) s/d {selected_datetime.strftime('%d %B %Y')}")
-df_history_mapping_filtered = df_all[df_all['tanggal'] < next_day].copy()
-kolom_tampil_history = ["tipe", "tongkang", "Ash_%", "Sulfur_%", "tanggal","tiang_start","tiang_end","Sudut Stacking","ketinggian"]
-st.dataframe(
-    df_history_mapping_filtered.sort_values("tanggal", ascending=False)[[c for c in kolom_tampil_history if c in df_history_mapping_filtered.columns]],
-    use_container_width=True
-)
-# --- Widget Pilihan Sumber Tanggal ---
+# --- Widget Pilihan Sumber Tanggal & Tanggal Aktif ---
 st.sidebar.subheader("Pengaturan Tanggal")
 source = st.sidebar.radio(
     "Gunakan tanggal dari:",
     ["Reclaimer", "Mapping"],
-    index=0,  # default: Reclaimer
+    index=0,
     help="Pilih sumber tanggal utama untuk filter data"
 )
 
@@ -139,6 +121,18 @@ selected_date = st.sidebar.selectbox(
     help="Tampilkan kondisi PADA atau SEBELUM tanggal aktivitas yang dipilih."
 )
 selected_datetime = selected_date
+
+# Filter berdasarkan tanggal yang dipilih
+next_day = selected_datetime + pd.Timedelta(days=1)
+
+# --- Tabel History Mapping (Filtered) ---
+st.subheader(f"History Data dari Google Sheets (Mapping) s/d {selected_datetime.strftime('%d %B %Y')}")
+df_history_mapping_filtered = df_all[df_all['tanggal'] < next_day].copy()
+kolom_tampil_history = ["tipe", "tongkang", "Ash_%", "Sulfur_%", "tanggal","tiang_start","tiang_end","Sudut Stacking","ketinggian"]
+st.dataframe(
+    df_history_mapping_filtered.sort_values("tanggal", ascending=False)[[c for c in kolom_tampil_history if c in df_history_mapping_filtered.columns]],
+    use_container_width=True
+)
 
 # --- Filter data sampai tanggal terpilih ---
 df_reclaimer = df_reclaimer_all[df_reclaimer_all['tanggal'] <= selected_datetime].copy()
@@ -160,7 +154,9 @@ def is_overlap(r1, r2):
     return overlap_x and overlap_y
 
 # Urutkan berdasarkan tanggal (baru -> lama), lalu iterasi untuk mendapatkan data unik yang tidak tumpang tindih
-df_sorted = df_history_mapping_filtered.sort_values("tanggal", ascending=False)
+# PERBAIKAN: Tambahkan dropna() untuk membuang baris tanpa koordinat (NaN) agar tidak error saat int() conversion
+df_sorted = df_history_mapping_filtered.dropna(subset=["tiang_start", "tiang_end", "sudut_start", "sudut_end"]).sort_values("tanggal", ascending=False)
+
 selected_rows = []
 for _, row in df_sorted.iterrows():
     if not any(is_overlap(row, sel) for sel in selected_rows):
@@ -175,7 +171,7 @@ st.subheader("Data Batubara (Coal Pile) yang Ditampilkan di Plot")
 st.dataframe(df_plot, use_container_width=True)
 
 
-# ===================== PLOTTING DENGAN PLOTLY =====================
+# ===================== PLOTTING 2D (MAPPING & RECLAIMER) =====================
 fig = go.Figure()
 color_map = {"Coal Normal": "green", "Coal Mix 2:1": "yellow", "Coal Mix 1:2 (HS:NS)":"yellow", "Coal HS": "red", "Coal NS" : "green"}
 
@@ -227,39 +223,7 @@ fig.update_yaxes(title="Sudut Stacking (derajat)", range=[y_min_custom, y_max_cu
 fig.update_layout(height=600, margin=dict(l=10, r=10, t=50, b=10), title=f"Visualisasi Posisi Coal Pile + Reclaimer per {selected_datetime.strftime('%d %B %Y')}")
 st.plotly_chart(fig, use_container_width=True, config={"displaylogo": False})
 
-# ===================== PLOT KETINGGIAN BOOM =====================
-st.subheader("Visualisasi Ketinggian Boom per Tiang")
-expanded_data = []
-for _, row in df_reclaimer.iterrows():
-    if pd.notna(row['tiang_awal']) and pd.notna(row['tiang_ahir']) and pd.notna(row['ketinggian_boom']):
-        for tiang in range(int(row['tiang_awal']), int(row['tiang_ahir']) + 1):
-            expanded_data.append({'tanggal': row['tanggal'], 'grup': row.get('grup', 'N/A'), 'tiang': tiang, 'ketinggian_boom': row['ketinggian_boom']})
-
-df_ketinggian = pd.DataFrame(expanded_data)
-if not df_ketinggian.empty:
-    # Ambil data ketinggian terbaru untuk setiap tiang
-    df_ketinggian = df_ketinggian.sort_values('tanggal', ascending=False).drop_duplicates(subset=['tiang'], keep='first')
-    
-    # Petakan tipe batubara ke setiap tiang untuk pewarnaan
-    tiang_to_tipe_map = {tiang: row['tipe'] for _, row in df_plot.iterrows() for tiang in range(int(row['tiang_start']), int(row['tiang_end']) + 1)}
-    df_ketinggian['tipe'] = df_ketinggian['tiang'].map(tiang_to_tipe_map)
-    df_ketinggian['color'] = df_ketinggian['tipe'].map(color_map).fillna('lightgrey')
-    df_ketinggian = df_ketinggian.sort_values('tiang')
-
-    fig2 = go.Figure(go.Bar(
-        x=df_ketinggian['tiang'], y=df_ketinggian['ketinggian_boom'], marker_color=df_ketinggian['color'],
-        hoverinfo='text',
-        hovertext=[f"<b>Tiang:</b> {r['tiang']}<br><b>Ketinggian:</b> {r['ketinggian_boom']:.2f}<br><b>Tipe Coal:</b> {r['tipe'] if pd.notna(r['tipe']) else 'N/A'}" for _, r in df_ketinggian.iterrows()]
-    ))
-    fig2.update_layout(title_text=f"Ketinggian Boom per Tiang (s/d {selected_datetime.strftime('%d %B %Y')})",
-                       xaxis_title="Nomor Tiang", yaxis_title="Ketinggian Boom (meter)",
-                       xaxis=dict(range=[0.5, 35.5], dtick=1), yaxis=dict(range=[0, df_ketinggian['ketinggian_boom'].max() + 5 if not df_ketinggian.empty else 10]), height=500)
-    st.plotly_chart(fig2, use_container_width=True)
-else:
-    st.warning("Tidak ada data ketinggian boom yang valid untuk ditampilkan pada tanggal yang dipilih.")
-
-
-    # ===================== PLOT KETINGGIAN BOOM (3D VERSION) =====================
+# ===================== PLOT KETINGGIAN BOOM (3D VERSION) =====================
 st.subheader("Visualisasi Ketinggian Boom per Tiang (3D View)")
 expanded_data = []
 for _, row in df_reclaimer.iterrows():
@@ -329,7 +293,14 @@ if not df_ketinggian.empty:
             name='Area Coverage'
         ))
 
-    
+    # 1. Gambar Batang Tiang (Garis Vertikal Tebal)
+    fig3d.add_trace(go.Scatter3d(
+        x=x_lines, y=y_lines, z=z_lines,
+        mode='lines',
+        line=dict(color=line_colors, width=15), # Width diperbesar agar terlihat solid seperti tiang
+        name='Tiang Structure',
+        hoverinfo='none'
+    ))
 
     # 2. Gambar Marker di Puncak (untuk Tooltip & Indikator Kepala)
     fig3d.add_trace(go.Scatter3d(
