@@ -3,6 +3,7 @@ from streamlit_gsheets import GSheetsConnection
 import plotly.graph_objects as go
 import pandas as pd
 from datetime import datetime
+import numpy as np
 
 # --- Konfigurasi Halaman Streamlit ---
 st.set_page_config(page_title="Rectangles from Google Sheet", layout="wide")
@@ -95,7 +96,6 @@ y_min_custom, y_max_custom = st.sidebar.slider(
 )
 
 
-# ===================== T A M P I L A N   H A L A M A N   U T A M A =====================
 # --- Widget Pilihan Sumber Tanggal & Tanggal Aktif ---
 st.sidebar.subheader("Pengaturan Tanggal")
 source = st.sidebar.radio(
@@ -162,7 +162,7 @@ for _, row in df_sorted.iterrows():
     if not any(is_overlap(row, sel) for sel in selected_rows):
         selected_rows.append(row)
 
-# Hasil final untuk plotting mapping
+# Hasil final untuk plotting mapping (Ini adalah data Mapping Terbaru yang bersih dari overlap)
 df_plot = pd.DataFrame(selected_rows)
 if not df_plot.empty and "tiang_start" in df_plot.columns:
     df_plot = df_plot.sort_values("tiang_start", ascending=True)
@@ -334,3 +334,99 @@ if not df_ketinggian.empty:
 
 else:
     st.warning("Tidak ada data ketinggian boom yang valid untuk ditampilkan pada tanggal yang dipilih.")
+
+# ===================== PLOT MAPPING 3D (STOCKPILE PROFILE) =====================
+st.subheader("Visualisasi Profil Stockpile 3D (Mapping Area)")
+
+df_history_mapping_filtered2 = df_sorted
+df_map_3d = df_history_mapping_filtered2[
+    (df_history_mapping_filtered2['tanggal'] <= next_day)&
+    (df_history_mapping_filtered2['tiang_start'] >= 1) &
+    (df_history_mapping_filtered2['tiang_start'] <= 35)
+       
+].copy()
+
+if not df_map_3d.empty:
+    fig_map_3d = go.Figure()
+
+    for _, row in df_map_3d.iterrows():
+        # Ambil nilai mentah
+        h = row.get('sudut_end')
+        t_start = row.get('tiang_start')
+        t_end = row.get('tiang_end')
+        tipe_coal = row.get('tipe')
+        color = color_map.get(tipe_coal, 'gray')
+
+        # Lewati baris jika nilai numerik penting kosong atau tidak finite
+        if pd.isna(t_start) or pd.isna(t_end) or pd.isna(h):
+            # Jika Anda ingin tetap menampilkan entri meski kosong, ganti `continue`
+            # menjadi handling alternatif. Untuk sekarang kita skip agar tidak error.
+            continue
+        if not (np.isfinite(t_start) and np.isfinite(t_end) and np.isfinite(h)):
+            continue
+
+        # Pastikan t_start <= t_end (jika tidak, swap)
+        try:
+            t_start_f = float(t_start)
+            t_end_f = float(t_end)
+            if t_start_f > t_end_f:
+                t_start_f, t_end_f = t_end_f, t_start_f
+        except Exception:
+            # Jika tidak bisa konversi ke float, skip
+            continue
+
+        # Buat bentuk "Tirai" / Dinding Solid untuk setiap blok batubara
+        x_c = [t_start_f, t_start_f, t_end_f, t_end_f, t_start_f]
+        y_c = [0, 0, 0, 0, 0]  # Flat di Y
+        z_c = [0, float(h), float(h), 0, 0]
+
+        # Format Tanggal / fallback teks
+        tgl_str = row['tanggal'].strftime('%d %B %Y') if pd.notna(row.get('tanggal')) else "-"
+
+        # Buat representasi Tiang untuk hover tanpa memanggil int() langsung pada NaN
+        try:
+            t_start_int = int(round(t_start_f))
+            t_end_int = int(round(t_end_f))
+            tiang_text = f"{t_start_int} - {t_end_int}"
+        except Exception:
+            tiang_text = "-"
+
+        fig_map_3d.add_trace(go.Scatter3d(
+            x=x_c, y=y_c, z=z_c,
+            mode='lines',
+            line=dict(color=color, width=2),
+            surfaceaxis=1,
+            surfacecolor=color,
+            opacity=0.8,
+            name=str(tipe_coal),
+            hoverinfo='text',
+            text=(
+                f"<b>Tipe:</b> {tipe_coal}<br>"
+                f"<b>Tongkang:</b> {row.get('tongkang', '-') }<br>"
+                f"<b>Tanggal:</b> {tgl_str}<br>"
+                f"<b>Tiang:</b> {tiang_text}<br>"
+                f"<b>Level/Sudut:</b> {float(h)}"
+            )
+        ))
+
+    # Setup axis range aman: jika kolom sudut_end kosong, guard max()
+    max_h = df_map_3d['sudut_end'].dropna()
+    zmax = (max_h.max() + 10) if not max_h.empty else 10
+
+    fig_map_3d.update_layout(
+        title=f"Profil Stockpile 3D (Mapping s/d {selected_datetime.strftime('%d %B %Y')})",
+        scene=dict(
+            xaxis_title='Nomor Tiang',
+            yaxis_title='Depth (Y)',
+            zaxis_title='Level / Sudut',
+            xaxis=dict(range=[0, 36]),
+            zaxis=dict(range=[0, zmax]),
+            aspectmode='manual',
+            aspectratio=dict(x=2, y=0.5, z=1)
+        ),
+        height=600,
+        margin=dict(l=0, r=0, t=40, b=0)
+    )
+    st.plotly_chart(fig_map_3d, use_container_width=True)
+else:
+    st.info("Tidak ada data mapping dalam range tiang 1-35 pada tanggal terpilih.")
