@@ -257,3 +257,109 @@ if not df_ketinggian.empty:
     st.plotly_chart(fig2, use_container_width=True)
 else:
     st.warning("Tidak ada data ketinggian boom yang valid untuk ditampilkan pada tanggal yang dipilih.")
+
+
+    # ===================== PLOT KETINGGIAN BOOM (3D VERSION) =====================
+st.subheader("Visualisasi Ketinggian Boom per Tiang (3D View)")
+expanded_data = []
+for _, row in df_reclaimer.iterrows():
+    if pd.notna(row['tiang_awal']) and pd.notna(row['tiang_ahir']) and pd.notna(row['ketinggian_boom']):
+        for tiang in range(int(row['tiang_awal']), int(row['tiang_ahir']) + 1):
+            expanded_data.append({'tanggal': row['tanggal'], 'grup': row.get('grup', 'N/A'), 'tiang': tiang, 'ketinggian_boom': row['ketinggian_boom']})
+
+df_ketinggian = pd.DataFrame(expanded_data)
+
+if not df_ketinggian.empty:
+    # Ambil data ketinggian terbaru untuk setiap tiang
+    df_ketinggian = df_ketinggian.sort_values('tanggal', ascending=False).drop_duplicates(subset=['tiang'], keep='first')
+    
+    # Petakan tipe batubara ke setiap tiang untuk pewarnaan
+    tiang_to_tipe_map = {tiang: row['tipe'] for _, row in df_plot.iterrows() for tiang in range(int(row['tiang_start']), int(row['tiang_end']) + 1)}
+    df_ketinggian['tipe'] = df_ketinggian['tiang'].map(tiang_to_tipe_map)
+    # Pastikan color_map tersedia (diambil dari blok kode sebelumnya)
+    df_ketinggian['color'] = df_ketinggian['tipe'].map(color_map).fillna('lightgrey')
+    df_ketinggian = df_ketinggian.sort_values('tiang')
+
+    # --- IMPLEMENTASI 3D PLOT ---
+    x_lines = []
+    y_lines = []
+    z_lines = []
+    line_colors = []
+
+    # Kita gunakan Y=0 sebagai baseline karena data aslinya linear (sepanjang tiang)
+    # Anda bisa mengganti y_pos dengan mapping 'grup' jika ingin memisahkan grup secara visual
+    
+    for _, row in df_ketinggian.iterrows():
+        y_pos = 0 
+        
+        # Titik Dasar (Tanah)
+        x_lines.append(row['tiang'])
+        y_lines.append(y_pos)
+        z_lines.append(0)
+        line_colors.append(row['color'])
+        
+        # Titik Puncak (Ketinggian Boom)
+        x_lines.append(row['tiang'])
+        y_lines.append(y_pos)
+        z_lines.append(row['ketinggian_boom'])
+        line_colors.append(row['color'])
+        
+        # Pemisah (None) agar garis tidak bersambung antar tiang
+        x_lines.append(None)
+        y_lines.append(None)
+        z_lines.append(None)
+        line_colors.append(row['color'])
+
+    fig3d = go.Figure()
+
+    # --- AREA FILL 3D (Background Curtain) ---
+    # Membentuk polygon tertutup: Kiri Bawah -> Puncak-puncak -> Kanan Bawah -> Kiri Bawah
+    if len(df_ketinggian) > 1:
+        x_fill = [df_ketinggian['tiang'].iloc[0]] + df_ketinggian['tiang'].tolist() + [df_ketinggian['tiang'].iloc[-1]] + [df_ketinggian['tiang'].iloc[0]]
+        y_fill = [0] * len(x_fill)
+        z_fill = [0] + df_ketinggian['ketinggian_boom'].tolist() + [0] + [0]
+        
+        fig3d.add_trace(go.Scatter3d(
+            x=x_fill, y=y_fill, z=z_fill,
+            mode='lines',
+            line=dict(width=0), # Hilangkan garis border area
+            surfaceaxis=0, # 1 = Normal Sumbu Y (Fill bidang XZ)
+            surfacecolor='rgba(0, 200, 255, 0.15)', # Biru muda transparan
+            hoverinfo='skip',
+            name='Area Coverage'
+        ))
+
+    
+
+    # 2. Gambar Marker di Puncak (untuk Tooltip & Indikator Kepala)
+    fig3d.add_trace(go.Scatter3d(
+        x=df_ketinggian['tiang'],
+        y=[0] * len(df_ketinggian),
+        z=df_ketinggian['ketinggian_boom'],
+        mode='markers',
+        marker=dict(size=6, color=df_ketinggian['color'], symbol='circle'),
+        text=[f"<b>Tiang:</b> {r['tiang']}<br><b>Ketinggian:</b> {r['ketinggian_boom']:.2f}m<br><b>Tipe:</b> {r['tipe']}" for _, r in df_ketinggian.iterrows()],
+        hoverinfo='text'
+    ))
+
+    # Layout 3D
+    fig3d.update_layout(
+        title=f"Ketinggian Boom 3D (s/d {selected_datetime.strftime('%d %B %Y')})",
+        scene=dict(
+            xaxis_title='Nomor Tiang',
+            yaxis_title='', # Y tidak terlalu relevan di view ini
+            zaxis_title='Ketinggian (m)',
+            xaxis=dict(range=[0.5, 35.5]), 
+            zaxis=dict(range=[0, df_ketinggian['ketinggian_boom'].max() + 5]),
+            # Mengunci aspek rasio agar tiang terlihat proporsional
+            aspectmode='manual',
+            aspectratio=dict(x=2, y=0.5, z=1) 
+        ),
+        margin=dict(l=0, r=0, b=0, t=40),
+        height=600
+    )
+
+    st.plotly_chart(fig3d, use_container_width=True)
+
+else:
+    st.warning("Tidak ada data ketinggian boom yang valid untuk ditampilkan pada tanggal yang dipilih.")

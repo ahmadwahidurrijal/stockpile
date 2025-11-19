@@ -1,3 +1,11 @@
+protobuf
+altair
+vega_datasets
+google-auth
+google-auth-oauthlib
+google-auth-httplib2
+gspread
+pygments
 streamlit
 st-gsheets-connection
 plotly

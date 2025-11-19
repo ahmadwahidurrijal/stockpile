@@ -1,0 +1,20 @@
+name: streamlit
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.11
+  - pip
+  - pandas>=2.0
+  - pip:
+    - streamlit==1.30.0
+    - streamlit_gsheets==0.1.15
+    - plotly>=5.15.0
+    - protobuf==3.20.3
+    - altair==4.2.2
+    - vega_datasets
+    - google-auth
+    - google-auth-oauthlib
+    - google-auth-httplib2
+    - gspread
+    - pygments
