@@ -4,6 +4,7 @@ import plotly.graph_objects as go
 import pandas as pd
 from datetime import datetime
 import numpy as np
+import re
 
 # --- Konfigurasi Halaman Streamlit ---
 st.set_page_config(page_title="Rectangles from Google Sheet", layout="wide")
@@ -150,22 +151,38 @@ st.dataframe(
 def is_overlap(r1, r2):
     """Cek apakah dua area (rectangle) tumpang tindih."""
     overlap_x = (r1["tiang_start"] < r2["tiang_end"]) and (r2["tiang_start"] < r1["tiang_end"])
-    overlap_y = not (r1["sudut_end"] <= r2["sudut_start"] or r1["sudut_start"] >= r2["sudut_end"])
+    overlap_y = not (r1["sudut_end"] <= r2["sudut_start"] and r1["sudut_start"] >= r2["sudut_end"])
     return overlap_x and overlap_y
 
 # Urutkan berdasarkan tanggal (baru -> lama), lalu iterasi untuk mendapatkan data unik yang tidak tumpang tindih
-# PERBAIKAN: Tambahkan dropna() untuk membuang baris tanpa koordinat (NaN) agar tidak error saat int() conversion
-df_sorted = df_history_mapping_filtered.dropna(subset=["tiang_start", "tiang_end", "sudut_start", "sudut_end"]).sort_values("tanggal", ascending=False)
-
+df_sorted = df_history_mapping_filtered.sort_values("tanggal", ascending=False)
 selected_rows = []
 for _, row in df_sorted.iterrows():
     if not any(is_overlap(row, sel) for sel in selected_rows):
         selected_rows.append(row)
 
-# Hasil final untuk plotting mapping (Ini adalah data Mapping Terbaru yang bersih dari overlap)
+# Hasil final untuk plotting mapping
+# Ambil tanggal terbaru dari df_valid
+latest_date = df_sorted["tanggal"].max()
+
+# Ambil batas 1 bulan terakhir
+one_month_ago = latest_date - pd.Timedelta(days=30)
+
+# Filter hanya 1 bulan terakhir
+df_last_month = df_sorted[df_sorted["tanggal"].between(one_month_ago, latest_date)]
+
+# Jika sebelumnya kamu punya selected_rows:
 df_plot = pd.DataFrame(selected_rows)
+
+# Pastikan df_plot hanya berisi 1 bulan terakhir (sinkron dengan data induk)
+if not df_plot.empty and "tanggal" in df_plot.columns:
+    df_plot["tanggal"] = pd.to_datetime(df_plot["tanggal"], errors="coerce")
+    df_plot = df_plot[df_plot["tanggal"].between(one_month_ago, latest_date)]
+
+# Sort sesuai tiang_start
 if not df_plot.empty and "tiang_start" in df_plot.columns:
     df_plot = df_plot.sort_values("tiang_start", ascending=True)
+
 
 st.subheader("Data Batubara (Coal Pile) yang Ditampilkan di Plot")
 st.dataframe(df_plot, use_container_width=True)
@@ -335,98 +352,230 @@ if not df_ketinggian.empty:
 else:
     st.warning("Tidak ada data ketinggian boom yang valid untuk ditampilkan pada tanggal yang dipilih.")
 
-# ===================== PLOT MAPPING 3D (STOCKPILE PROFILE) =====================
-st.subheader("Visualisasi Profil Stockpile 3D (Mapping Area)")
+# ========Plot baru==========
+TIANG_COLS = [
+    "Tiang 1-2","Tiang 2-3","Tiang 3-4","Tiang 4-5","Tiang 5-6","Tiang 6-7","Tiang 7-8","Tiang 8-9",
+    "Tiang 9-10","Tiang 10-11","Tiang 11-12","Tiang 12-13","Tiang 13-14","Tiang 14-15","Tiang 15-16","Tiang 16-17",
+    "Tiang 17-18","Tiang 18-19","Tiang 19-20","Tiang 20-21","Tiang 21-22","Tiang 22-23","Tiang 23-24","Tiang 24-25",
+    "Tiang 25-26","Tiang 26-27","Tiang 27-28","Tiang 28-29","Tiang 29-30","Tiang 30-31","Tiang 31-32","Tiang 32-33",
+    "Tiang 33-34","Tiang 34-35"
+]
 
-df_history_mapping_filtered2 = df_sorted
-df_map_3d = df_history_mapping_filtered2[
-    (df_history_mapping_filtered2['tanggal'] <= next_day)&
-    (df_history_mapping_filtered2['tiang_start'] >= 1) &
-    (df_history_mapping_filtered2['tiang_start'] <= 35)
-       
-].copy()
+# --- Bersihkan & filter 1 bulan terakhir dari df_plot ---
+assert "tanggal" in df_plot.columns, "df_plot harus memiliki kolom 'tanggal'"
 
-if not df_map_3d.empty:
-    fig_map_3d = go.Figure()
+df_plot = df_plot.copy()
+df_plot["tanggal"] = pd.to_datetime(df_plot["tanggal"], errors="coerce", dayfirst=True)
+df_valid = df_plot.dropna(subset=["tanggal"])
+latest_date = df_valid["tanggal"].max()
+one_month_ago = latest_date - pd.Timedelta(days=30)
 
-    for _, row in df_map_3d.iterrows():
-        # Ambil nilai mentah
-        h = row.get('sudut_end')
-        t_start = row.get('tiang_start')
-        t_end = row.get('tiang_end')
-        tipe_coal = row.get('tipe')
-        color = color_map.get(tipe_coal, 'gray')
+# Ambil hanya kolom yang diminta (yang memang ada di df_plot)
+existing_tiang = [c for c in TIANG_COLS if c in df_valid.columns]
+use_cols = ["tanggal"] + existing_tiang
 
-        # Lewati baris jika nilai numerik penting kosong atau tidak finite
-        if pd.isna(t_start) or pd.isna(t_end) or pd.isna(h):
-            # Jika Anda ingin tetap menampilkan entri meski kosong, ganti `continue`
-            # menjadi handling alternatif. Untuk sekarang kita skip agar tidak error.
-            continue
-        if not (np.isfinite(t_start) and np.isfinite(t_end) and np.isfinite(h)):
-            continue
+df_last_month = (
+    df_valid.loc[df_valid["tanggal"].between(one_month_ago, latest_date), use_cols]
+    .copy()
+    .sort_values("tanggal")
+)
 
-        # Pastikan t_start <= t_end (jika tidak, swap)
-        try:
-            t_start_f = float(t_start)
-            t_end_f = float(t_end)
-            if t_start_f > t_end_f:
-                t_start_f, t_end_f = t_end_f, t_start_f
-        except Exception:
-            # Jika tidak bisa konversi ke float, skip
-            continue
-
-        # Buat bentuk "Tirai" / Dinding Solid untuk setiap blok batubara
-        x_c = [t_start_f, t_start_f, t_end_f, t_end_f, t_start_f]
-        y_c = [0, 0, 0, 0, 0]  # Flat di Y
-        z_c = [0, float(h), float(h), 0, 0]
-
-        # Format Tanggal / fallback teks
-        tgl_str = row['tanggal'].strftime('%d %B %Y') if pd.notna(row.get('tanggal')) else "-"
-
-        # Buat representasi Tiang untuk hover tanpa memanggil int() langsung pada NaN
-        try:
-            t_start_int = int(round(t_start_f))
-            t_end_int = int(round(t_end_f))
-            tiang_text = f"{t_start_int} - {t_end_int}"
-        except Exception:
-            tiang_text = "-"
-
-        fig_map_3d.add_trace(go.Scatter3d(
-            x=x_c, y=y_c, z=z_c,
-            mode='lines',
-            line=dict(color=color, width=2),
-            surfaceaxis=1,
-            surfacecolor=color,
-            opacity=0.8,
-            name=str(tipe_coal),
-            hoverinfo='text',
-            text=(
-                f"<b>Tipe:</b> {tipe_coal}<br>"
-                f"<b>Tongkang:</b> {row.get('tongkang', '-') }<br>"
-                f"<b>Tanggal:</b> {tgl_str}<br>"
-                f"<b>Tiang:</b> {tiang_text}<br>"
-                f"<b>Level/Sudut:</b> {float(h)}"
-            )
-        ))
-
-    # Setup axis range aman: jika kolom sudut_end kosong, guard max()
-    max_h = df_map_3d['sudut_end'].dropna()
-    zmax = (max_h.max() + 10) if not max_h.empty else 10
-
-    fig_map_3d.update_layout(
-        title=f"Profil Stockpile 3D (Mapping s/d {selected_datetime.strftime('%d %B %Y')})",
-        scene=dict(
-            xaxis_title='Nomor Tiang',
-            yaxis_title='Depth (Y)',
-            zaxis_title='Level / Sudut',
-            xaxis=dict(range=[0, 36]),
-            zaxis=dict(range=[0, zmax]),
-            aspectmode='manual',
-            aspectratio=dict(x=2, y=0.5, z=1)
-        ),
-        height=600,
-        margin=dict(l=0, r=0, t=40, b=0)
+# Coerce numerik untuk kolom Tiang (tangani koma sebagai desimal)
+for c in existing_tiang:
+    df_last_month[c] = pd.to_numeric(
+        df_last_month[c].astype(str).str.replace(",", ".", regex=False),
+        errors="coerce"
     )
-    st.plotly_chart(fig_map_3d, use_container_width=True)
+
+# --- Tampilkan tabel hasil ---
+st.subheader("Tiang (1 bulan terakhir dari df_plot)")
+st.caption(f"Rentang: {one_month_ago.date()} s.d. {latest_date.date()} | Kolom terpakai: {len(existing_tiang)}")
+st.dataframe(df_last_month, use_container_width=True)
+
+# Opsional: unduh CSV hasil filter
+st.download_button(
+    "Unduh CSV (1 bulan terakhir)",
+    df_last_month.to_csv(index=False).encode("utf-8"),
+    file_name="tiang_last_month_from_df_plot.csv",
+    mime="text/csv"
+)
+
+# 1) Jika ada duplikasi per hari, ambil baris terakhir per tanggal (opsional tapi aman)
+df_last_month = (
+    df_last_month.sort_values("tanggal")
+    .groupby("tanggal", as_index=False)
+    .tail(1)
+    .reset_index(drop=True)
+)
+
+# 2) Tentukan kolom TIANG yang dipakai
+#    - pakai TIANG_COLS yang ada di df
+#    - kalau kosong, auto-deteksi kolom pola "Tiang d1-d2"
+existing_tiang = [c for c in TIANG_COLS if c in df_last_month.columns]
+
+if not existing_tiang:
+    # Auto-deteksi
+    candidate_cols = [
+        c for c in df_last_month.columns
+        if re.match(r"(?i)^tiang\s*\d+\s*-\s*\d+$", str(c).strip())
+    ]
+    if not candidate_cols:
+        st.error("Tidak ada kolom 'Tiang d1-d2' yang tersedia di df_last_month.")
+        st.stop()
+
+    # Urutkan berdasar angka awal segmen
+    def seg_start(col):
+        m = re.search(r"(\d+)\s*-\s*(\d+)", col)
+        return int(m.group(1)) if m else 10**9
+
+    existing_tiang = sorted(candidate_cols, key=seg_start)
+
+# 3) Pastikan numerik
+for c in existing_tiang:
+    df_last_month[c] = pd.to_numeric(
+        df_last_month[c].astype(str).str.replace(",", ".", regex=False),
+        errors="coerce"
+    )
+
+# 4) Siapkan matriks untuk Surface
+Z = df_last_month[existing_tiang].to_numpy(dtype=float)   # shape: (n_tanggal, n_tiang)
+X = np.arange(1, len(existing_tiang) + 1)                 # 1..N segmen
+Y = np.arange(len(df_last_month))                         # index waktu
+
+# 5) Label sumbu Y pakai tanggal (tick text), dibatasi supaya tidak padat
+tanggal_str = df_last_month["tanggal"].dt.strftime("%Y-%m-%d").tolist()
+if len(Y) <= 12:
+    tick_idx = Y.tolist()
 else:
-    st.info("Tidak ada data mapping dalam range tiang 1-35 pada tanggal terpilih.")
+    step = max(1, len(Y) // 12)
+    tick_idx = list(range(0, len(Y), step))
+    if tick_idx[-1] != len(Y) - 1:
+        tick_idx.append(len(Y) - 1)  # pastikan titik terakhir tampil
+
+tick_text = [tanggal_str[i] for i in tick_idx]
+
+# 6) Plot 3D Surface
+fig = go.Figure(data=[
+    go.Surface(
+        z=Z,
+        x=X,
+        y=Y,
+        showscale=True,
+        colorbar=dict(title="Nilai")
+    )
+])
+
+fig.update_layout(
+    title=f"3D Surface – Profil Tiang (1 bulan terakhir) | {len(df_last_month)} hari × {len(existing_tiang)} segmen",
+    scene=dict(
+        xaxis_title="Segmen Tiang (1 = Tiang 1-2)",
+        yaxis_title="Tanggal",
+        zaxis_title="Nilai",
+        yaxis=dict(tickmode="array", tickvals=tick_idx, ticktext=tick_text),
+    ),
+    margin=dict(l=0, r=0, t=30, b=0),
+    height=720,
+)
+
+#st.plotly_chart(fig, use_container_width=True)
+
+# Opsional: tampilkan info kolom yang dipakai
+with st.expander("Kolom tiang yang dipakai"):
+    st.write(existing_tiang)
+
+#======new
+# Jika TIANG_COLS tidak cocok dengan df, auto-deteksi
+existing_tiang = [c for c in TIANG_COLS if c in df_last_month.columns]
+
+if not existing_tiang:
+    candidate_cols = [
+        c for c in df_last_month.columns
+        if re.match(r"(?i)^tiang\s*\d+\s*-\s*\d+$", str(c))
+    ]
+    if not candidate_cols:
+        st.error("Tidak ada kolom Tiang x-y ditemukan di df_last_month.")
+        st.stop()
+
+    # Urutkan berdasar nomor awal
+    def seg_start(col):
+        m = re.search(r"(\d+)\s*-\s*(\d+)", col)
+        return int(m.group(1)) if m else 999
+
+    existing_tiang = sorted(candidate_cols, key=seg_start)
+
+# Numerikkan kolom tiang
+for c in existing_tiang:
+    df_last_month[c] = pd.to_numeric(
+        df_last_month[c].astype(str).str.replace(",", ".", regex=False),
+        errors="coerce"
+    )
+
+# ===============================
+#  SIAPKAN MATRIKS SURFACE
+# ===============================
+
+Z = df_last_month[existing_tiang].to_numpy(dtype=float)
+
+# X = numeric index (0..N-1), tapi nanti ditampilkan sebagai nama tiang
+x_numeric = np.arange(len(existing_tiang))
+
+# Y = indeks tanggal
+Y = np.arange(len(df_last_month))
+tanggal_str = df_last_month["tanggal"].dt.strftime("%Y-%m-%d").tolist()
+
+# Tick tanggal diringkas agar tidak terlalu rapat
+if len(Y) <= 12:
+    tick_y_idx = Y.tolist()
+else:
+    step = max(1, len(Y) // 12)
+    tick_y_idx = list(range(0, len(Y), step))
+    if tick_y_idx[-1] != len(Y) - 1:
+        tick_y_idx.append(len(Y) - 1)
+
+tick_y_text = [tanggal_str[i] for i in tick_y_idx]
+
+# ===============================
+#  PLOT 3D SURFACE
+# ===============================
+
+fig = go.Figure(
+    data=[
+        go.Surface(
+            z=Z,
+            x=x_numeric,
+            y=Y,
+            showscale=True,
+            colorbar=dict(title="Nilai"),
+        )
+    ]
+)
+
+fig.update_layout(
+    title=f"3D Surface – Profil Tiang (1 bulan terakhir)",
+    scene=dict(
+        xaxis_title="Segmen Tiang",
+        yaxis_title="Tanggal",
+        zaxis_title="Nilai",
+
+        # Tampilkan nama kolom tiang di sumbu X
+        xaxis=dict(
+            tickmode="array",
+            tickvals=x_numeric,
+            ticktext=existing_tiang
+        ),
+
+        # Tampilkan tanggal di sumbu Y
+        yaxis=dict(
+            tickmode="array",
+            tickvals=tick_y_idx,
+            ticktext=tick_y_text
+        ),
+    ),
+    margin=dict(l=0, r=0, t=50, b=0),
+    height=750,
+)
+
+st.plotly_chart(fig, use_container_width=True)
+
+with st.expander("Kolom tiang yang dipakai"):
+    st.write(existing_tiang)
