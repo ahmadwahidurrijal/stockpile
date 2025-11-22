@@ -579,3 +579,136 @@ st.plotly_chart(fig, use_container_width=True)
 
 with st.expander("Kolom tiang yang dipakai"):
     st.write(existing_tiang)
+
+
+#====baru
+# List target (opsional). Kalau kosong/tdk lengkap di data, akan auto-deteksi.
+TIANG_COLS = [
+    "Tiang 1-2","Tiang 2-3","Tiang 3-4","Tiang 4-5","Tiang 5-6","Tiang 6-7","Tiang 7-8","Tiang 8-9",
+    "Tiang 9-10","Tiang 10-11","Tiang 11-12","Tiang 12-13","Tiang 13-14","Tiang 14-15","Tiang 15-16","Tiang 16-17",
+    "Tiang 17-18","Tiang 18-19","Tiang 19-20","Tiang 20-21","Tiang 21-22","Tiang 22-23","Tiang 23-24","Tiang 24-25",
+    "Tiang 25-26","Tiang 26-27","Tiang 27-28","Tiang 28-29","Tiang 29-30","Tiang 30-31","Tiang 31-32","Tiang 32-33",
+    "Tiang 33-34","Tiang 34-35"
+]
+
+# --- Siapkan kolom tiang yang dipakai ---
+def detect_tiang_cols(df):
+    # pakai TIANG_COLS yang eksis
+    cols = [c for c in TIANG_COLS if c in df.columns]
+    if cols:
+        return cols
+    # fallback: regex auto-deteksi
+    cand = [c for c in df.columns if re.match(r"(?i)^tiang\s*\d+\s*-\s*\d+$", str(c).strip())]
+    if not cand:
+        return []
+    # urutkan berdasar angka awal segmen
+    def seg_start(col):
+        m = re.search(r"(\d+)\s*-\s*(\d+)", col)
+        return int(m.group(1)) if m else 10**9
+    return sorted(cand, key=seg_start)
+
+assert "tanggal" in df_last_month.columns, "df_last_month harus ada kolom 'tanggal'."
+dfm = df_last_month.copy()
+dfm["tanggal"] = pd.to_datetime(dfm["tanggal"], errors="coerce")
+dfm = dfm.dropna(subset=["tanggal"])
+
+tiang_cols = detect_tiang_cols(dfm)
+if not tiang_cols:
+    st.error("Tidak ada kolom 'Tiang x-y' ditemukan pada df_last_month.")
+    st.stop()
+
+# Coerce numerik (tangani koma)
+for c in tiang_cols:
+    dfm[c] = pd.to_numeric(dfm[c].astype(str).str.replace(",", ".", regex=False), errors="coerce")
+
+# Urutkan tanggal terbaru -> terlama
+dfm = dfm.sort_values("tanggal", ascending=False).reset_index(drop=True)
+
+# Buat profil lengkap:
+# bfill mengisi NaN di baris atas dengan nilai dari baris berikutnya (lebih lama)
+filled = dfm[tiang_cols].bfill(axis=0)
+profile = filled.iloc[0]
+
+# Buang kolom yang tetap NaN sepanjang 1 bulan
+mask_non_nan = profile.notna()
+tiang_used = list(profile.index[mask_non_nan])
+profile = profile[mask_non_nan]
+
+if len(tiang_used) < len(tiang_cols):
+    missing = set(tiang_cols) - set(tiang_used)
+    st.warning(f"Mengeluarkan {len(missing)} kolom tanpa data sepanjang 1 bulan: {sorted(missing)}")
+
+# (Opsional) tanggal sumber untuk tiap tiang (dari baris pertama yang punya nilai)
+source_dates = {}
+for c in tiang_used:
+    idx = dfm[c].first_valid_index()  # pada dfm yg sudah descending → ini tanggal paling terbaru yg punya nilai
+    source_dates[c] = dfm.loc[idx, "tanggal"] if idx is not None else pd.NaT
+
+# --- 2D AREA CHART ---
+x_labels = tiang_used                     # tampilkan nama tiang satu per satu
+y_values = profile.values.astype(float)   # nilai akhir setelah backfill
+
+fig = go.Figure(
+    data=[
+        go.Scatter(
+            x=x_labels,
+            y=y_values,
+            mode="lines+markers",
+            fill="tozeroy",
+            hovertemplate="<b>%{x}</b><br>Nilai: %{y:.3f}<extra></extra>",
+            name="Profil lengkap (latest-available)"
+        )
+    ]
+)
+
+fig.update_layout(
+    title="2D Area – Profil Tiang (latest-available dalam 1 bulan terakhir)",
+    xaxis_title="Segmen Tiang",
+    yaxis_title="Nilai",
+    margin=dict(l=0, r=0, t=40, b=0),
+    height=520,
+)
+
+st.plotly_chart(fig, use_container_width=True)
+
+# Pastikan df_plot & df_last_month punya 'tanggal'
+df_plot = df_plot.copy()
+df_plot["tanggal"] = pd.to_datetime(df_plot["tanggal"], errors="coerce")
+dfm = df_last_month.sort_values("tanggal", ascending=False).reset_index(drop=True)  # sumber backfill
+
+# Kumpulkan tanggal sumber per tiang dari df_last_month (sudah descending)
+source_dates = {}
+for c in x_labels:  # x_labels = daftar kolom tiang yang dipakai
+    idx = dfm[c].first_valid_index()
+    source_dates[c] = dfm.loc[idx, "tanggal"] if idx is not None else pd.NaT
+
+# Ambil 'tipe' dari df_plot yang tanggalnya sama dengan tanggal sumber
+# Fallback: kalau tanggal itu tidak ada di df_plot, ambil tipe dari baris valid terbaru df_plot untuk tiang tsb.
+dfp_desc = df_plot.sort_values("tanggal", ascending=False)
+tipe_list = []
+for c in x_labels:
+    sd = source_dates[c]
+    tipe_val = None
+    if pd.notna(sd):
+        match = dfp_desc.loc[dfp_desc["tanggal"] == sd]
+        if not match.empty:
+            tipe_val = match.iloc[-1]["tipe"] if "tipe" in match.columns else None
+    if tipe_val is None and c in dfp_desc.columns:
+        idx2 = dfp_desc[c].first_valid_index()
+        if idx2 is not None and "tipe" in dfp_desc.columns:
+            tipe_val = dfp_desc.loc[idx2, "tipe"]
+    tipe_list.append(tipe_val)
+
+with st.expander("Tanggal sumber nilai per tiang"):
+    st.dataframe(
+        pd.DataFrame({
+            "Tiang": x_labels,
+            "Tanggal Sumber": [
+                source_dates[c].strftime("%Y-%m-%d") if pd.notna(source_dates[c]) else None
+                for c in x_labels
+            ],
+            "Nilai": y_values,   # hasil profil latest-available
+            "Tipe": tipe_list,   # diambil dari df_plot pada baris sumber
+        }),
+        use_container_width=True
+    )
